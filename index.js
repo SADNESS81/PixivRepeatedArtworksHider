@@ -13,6 +13,8 @@
 // @license      MIT
 // ==/UserScript==
 
+const maxRepetitions = 3
+
 let noReprocess = [];
 
 const grabAndStoreNumbers = async (entry) => {
@@ -126,9 +128,14 @@ const getNumbers = (elements) => {
     };
 
     const handleReprocessingCase1 = (num, currentValue, currentElement) => {
+        if (maxRepetitions == 1) {
+            GM_setValue(`${num}`, currentValue + 1);
+            currentElement.classList.add('reprocessed')
+        } else {
         noReprocess.push(num);
         GM_setValue(`${num}`, currentValue + 1);
         currentElement.classList.add('processed2');
+        };
     };
 
     const handleReprocessingCase2 = (currentElement) => {
@@ -136,11 +143,11 @@ const getNumbers = (elements) => {
     };
 
     const shouldReprocess = (num, currentValue, currentElement) => {
-        return storedNumbers.includes(num) && !noReprocess.includes(num) && currentValue <= 3;
+        return storedNumbers.includes(num) && !noReprocess.includes(num) && currentValue < maxRepetitions;
     };
 
     const shouldMarkAsReprocessed = (num, currentValue, currentElement) => {
-        return storedNumbers.includes(num) && currentValue >= 3 && !noReprocess.includes(num) && !currentElement.classList.contains('processed2');
+        return storedNumbers.includes(num) && currentValue >= maxRepetitions && !noReprocess.includes(num);
     };
 
     const processElement = (currentElement) => {
