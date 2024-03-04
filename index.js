@@ -7,7 +7,7 @@
 // @grant        GM_setValue
 // @grant        GM_listValues
 // @inject-into  content
-// @version     1.0
+// @version     1.2
 // @author      SADNESS81
 // @description Hides an artwork after it appears 3 times
 // @license      MIT
@@ -143,7 +143,7 @@ const getNumbers = (elements) => {
     };
 
     const shouldReprocess = (num, currentValue, currentElement) => {
-        return storedNumbers.includes(num) && !noReprocess.includes(num) && currentValue < maxRepetitions;
+        return storedNumbers.includes(num) && !noReprocess.includes(num) && currentValue <= maxRepetitions;
     };
 
     const shouldMarkAsReprocessed = (num, currentValue, currentElement) => {
@@ -230,14 +230,15 @@ const intersectionCallback = (entries, observer) => {
     entries.forEach(entry => {
         if (entry.isIntersecting) {
             grabAndStoreNumbers(entry);
+            observer.disconnect();
         }
     });
 };
 
 const options = {
     root: null,
-    rootMargin: '0px',
-    threshold: 1.0
+    rootMargin: '1200px',
+    threshold: 0.5
 };
 
 const createIntersectionObserver = (callback, options) => new IntersectionObserver(callback, options);
@@ -264,8 +265,9 @@ const isInRootBounds = (element, rootBounds) => {
 
 const observeNewElements = (observer, targetElement, targetSelector) => {
     const rootBounds = document.querySelector(targetElement).getBoundingClientRect();
-    const potentialNewElements = document.querySelectorAll(targetSelector);
-    const newElements = Array.from(potentialNewElements).filter(element => isInRootBounds(element, rootBounds));
+    const newElements = Array.from(document.querySelectorAll(targetSelector))
+        .filter(element => isInRootBounds(element, rootBounds));
+    
     observeElements(observer, newElements);
 };
 
@@ -278,9 +280,10 @@ const configureMutationObserver = (callback, targetElement) => {
 const targetSelector = "#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone > div > div > div > div > ul > li, #root > div.charcoal-token > div > div:nth-child(3) > div > div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li";
 const targetElement = "#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone, #root > div.charcoal-token > div > div:nth-child(3) > div > div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone";
 
+const intersectionObserver = createIntersectionObserver(intersectionCallback, options);
+
 waitForElement(targetSelector).then(() => {
     const elements = document.querySelectorAll(targetSelector);
-    const intersectionObserver = createIntersectionObserver(intersectionCallback, options);
 
     observeElements(intersectionObserver, elements);
 
