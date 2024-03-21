@@ -14,6 +14,7 @@
 // ==/UserScript==
 
 const maxRepetitions = 3
+const dimRepeated = false
 
 let noReprocess = [];
 
@@ -30,10 +31,14 @@ const grabAndStoreNumbers = async (entry) => {
 
 const selectElement = (entry) => {
     const baseSelector = '#root > div.charcoal-token > div > div:nth-child(3) > div';
-    const selector1 = `div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li:not([style="display: none;"]) > div > div.sc-iasfms-3.frFjhu > div > a`;
-    const selector2 = `div.gtm-illust-recommend-zone > div > div > div > div > ul > li > div > div.sc-iasfms-3.frFjhu > div > a`;
+    const selectors = [
+        `div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li:not([style="display: none;"]) > div > div.sc-iasfms-3.frFjhu > div > a`,
+        `div.gtm-illust-recommend-zone > div > div > div > div > ul > li > div > div.sc-iasfms-3.frFjhu > div > a`,
+        `div.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt > div.sc-1kr69jw-2.hYTIUt > div.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div > div > div.sc-iasfms-3.frFjhu > div > a`,
+        `div > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone > ul > li > div > div.sc-iasfms-3.frFjhu > div > a`
+    ];
 
-    const combinedSelector = entry ? entry.target.querySelectorAll(`${baseSelector} > ${selector1}, ${baseSelector} > ${selector2}`) : `${baseSelector} > ${selector1}, ${baseSelector} > ${selector2}`;
+    const combinedSelector = entry ? entry.target.querySelectorAll(selectors.map(selector => `${baseSelector} > ${selector}`).join(', ')) : `${baseSelector} > ${selectors.join(', ')} `;
     return combinedSelector;
 };
 
@@ -42,7 +47,8 @@ const hideElements = async () => {
         '#root > div.charcoal-token > div > div:nth-child(3) > div > div > div > section > div.sc-s8zj3z-4.gjeneI > div.sc-ikag3o-0.dRXTLR > div > div > ul > li',
         '#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone > div > div > div > div > ul > li',
         '#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt > div.sc-1kr69jw-2.hYTIUt > div.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div',
-        '#root > div.charcoal-token > div > div:nth-child(3) > div > div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li'
+        '#root > div.charcoal-token > div > div:nth-child(3) > div > div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li',
+        `#root > div.charcoal-token > div > div:nth-child(3) > div > div > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone > ul > li`
     ];
 
     await hideByCondition(selectors);
@@ -73,17 +79,15 @@ const hideElementsByCondition = async (selectors, condition) => {
 
 const hideElement = async (element) => {
     try {
-        const isReprocessedSelector1 = ':not([style="display: none;"]) > div > div.sc-iasfms-3.frFjhu > div > a';
-        const isReprocessedSelector2 = 'div > div.sc-iasfms-3.frFjhu > div > a';
+        const isReprocessedSelector = 'div > div.sc-iasfms-3.frFjhu > div > a.reprocessed';
 
-        const isReprocessed = Array.from(element.querySelectorAll(isReprocessedSelector1))
-            .some(el => el.classList.contains('reprocessed'));
+        const isReprocessed = Array.from(element.querySelectorAll(isReprocessedSelector))
+            .some(el => el.style.display !== 'none');
 
-        const isReprocessed2 = Array.from(element.querySelectorAll(isReprocessedSelector2))
-            .some(el => el.classList.contains('reprocessed'));
-
-        if (isReprocessed || isReprocessed2) {
+        if (isReprocessed && dimRepeated === false) {
             element.style.display = 'none';
+        } else if (dimRepeated === true && isReprocessed) {
+            element.style.opacity = '0.2';
         }
     } catch (error) {
         console.error('Error hiding artwork:', error.message);
@@ -235,12 +239,6 @@ const intersectionCallback = (entries, observer) => {
     });
 };
 
-const options = {
-    root: null,
-    rootMargin: '1200px',
-    threshold: 0.5
-};
-
 const createIntersectionObserver = (callback, options) => new IntersectionObserver(callback, options);
 
 const waitForElement = async (selector) => {
@@ -277,8 +275,26 @@ const configureMutationObserver = (callback, targetElement) => {
     return observer;
 };
 
-const targetSelector = "#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone > div > div > div > div > ul > li, #root > div.charcoal-token > div > div:nth-child(3) > div > div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li";
-const targetElement = "#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone, #root > div.charcoal-token > div > div:nth-child(3) > div > div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone";
+const baseSelector = "#root > div.charcoal-token > div > div:nth-child(3) > div > div";
+const targetSelector = [
+    `${baseSelector}.gtm-illust-recommend-zone > div > div > div > div > ul > li`,
+    `${baseSelector} > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li`,
+    `${baseSelector}.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt > div.sc-1kr69jw-2.hYTIUt > div.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div`,
+    `${baseSelector} > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone > ul > li`
+  ].join(", ");
+  
+  const targetElement = [
+    `${baseSelector}.gtm-illust-recommend-zone`,
+    `${baseSelector} > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone`,
+    `${baseSelector}.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt`,
+    `${baseSelector} > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone`
+  ].join(", ");
+
+const options = {
+    root: null,
+    rootMargin: '1200px',
+    threshold: 1.0
+};
 
 const intersectionObserver = createIntersectionObserver(intersectionCallback, options);
 
