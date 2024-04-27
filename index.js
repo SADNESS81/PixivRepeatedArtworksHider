@@ -14,6 +14,7 @@
 // ==/UserScript==
 
 // Settings //
+
 const maxRepetitions = 3;
 
 const hideAuthor = false;
@@ -21,6 +22,7 @@ const hideAuthor = false;
 const dimRepeated = false;
 
 const countWithoutRefresh = false; // Will count the artwork as repeated if you were navigating through the webpage without refreshing. Normally it will count the artwork as repeated after refreshing and coming across it
+
 /*-----------------------------*/
 
 let ppixiv = false;
@@ -92,15 +94,19 @@ const hideElements = async () => {
 
 const hideElement = async (element) => {
   try {
-    if (
-      window.location.href.includes("bookmarks") ||
-      window.location.href.includes("artworks") ||
-      window.location.href.includes("ranking") ||
-      window.location.href.includes("bookmark_new_illust") ||
-      window.location.href.includes("complete") ||
-      window.location.href.includes("users")
-    ) {
-      return;
+    if (ppixiv === true) {
+      const pagesToIgnore = [
+        "bookmarks",
+        "artworks",
+        "ranking",
+        "bookmark_new_illust",
+        "complete",
+        "users",
+      ];
+
+      if (pagesToIgnore.some((page) => window.location.href.includes(page))) {
+        return;
+      }
     }
 
     const isReprocessedSelector =
@@ -145,15 +151,19 @@ const getNumbers = (elements) => {
   const numbers = new Set();
   const storedNumbers = new Set(getStoredNumbers());
 
-  if (
-    window.location.href.includes("bookmarks") ||
-    window.location.href.includes("artworks") ||
-    window.location.href.includes("ranking") ||
-    window.location.href.includes("bookmark_new_illust") ||
-    window.location.href.includes("complete") ||
-    window.location.href.includes("users")
-  ) {
-    return;
+  if (ppixiv === true) {
+    const pagesToIgnore = [
+      "bookmarks",
+      "artworks",
+      "ranking",
+      "bookmark_new_illust",
+      "complete",
+      "users",
+    ];
+
+    if (pagesToIgnore.some((page) => window.location.href.includes(page))) {
+      return;
+    }
   }
 
   const shouldSkipProcessing = (parentLi) => parentLi?.style.display === "none";
@@ -169,73 +179,41 @@ const getNumbers = (elements) => {
       if (num !== 0) {
         if (!storedNumbers.has(num)) {
           numbers.add(num);
-          handleProcessedElement(currentElement, num);
+          currentElement.classList.add("processed");
+          noReprocess.add(num);
         } else {
-          handleReprocessing(num, currentElement);
+          const currentValue = getNumberCount(num);
+
+          if (
+            storedNumbers.has(num) &&
+            !noReprocess.has(num) &&
+            currentValue <= maxRepetitions
+          ) {
+            if (maxRepetitions == 1) {
+              GM_setValue(`${num}`, currentValue + 1);
+              currentElement.classList.add("reprocessed");
+            } else {
+              noReprocess.add(num);
+              GM_setValue(`${num}`, currentValue + 1);
+              currentElement.classList.add("processed2");
+            }
+          } else if (
+            storedNumbers.has(num) &&
+            currentValue >= maxRepetitions &&
+            !noReprocess.has(num)
+          ) {
+            currentElement.classList.add("reprocessed");
+          }
         }
       }
     }
-  };
-
-  const handleProcessedElement = (currentElement, num) => {
-    currentElement.classList.add("processed");
-    noReprocess.add(num);
-  };
-
-  const handleReprocessing = (num, currentElement) => {
-    const currentValue = getNumberCount(num);
-
-    if (shouldReprocess(num, currentValue, currentElement)) {
-      handleReprocessingCase1(num, currentValue, currentElement);
-    } else if (shouldMarkAsReprocessed(num, currentValue, currentElement)) {
-      handleReprocessingCase2(currentElement);
-    }
-  };
-
-  const handleReprocessingCase1 = (num, currentValue, currentElement) => {
-    if (maxRepetitions == 1) {
-      GM_setValue(`${num}`, currentValue + 1);
-      currentElement.classList.add("reprocessed");
-    } else {
-      noReprocess.add(num);
-      GM_setValue(`${num}`, currentValue + 1);
-      currentElement.classList.add("processed2");
-    }
-  };
-
-  const handleReprocessingCase2 = (currentElement) => {
-    currentElement.classList.add("reprocessed");
-  };
-
-  const shouldReprocess = (num, currentValue, currentElement) => {
-    return (
-      storedNumbers.has(num) &&
-      !noReprocess.has(num) &&
-      currentValue <= maxRepetitions
-    );
-  };
-
-  const shouldMarkAsReprocessed = (num, currentValue, currentElement) => {
-    return (
-      storedNumbers.has(num) &&
-      currentValue >= maxRepetitions &&
-      !noReprocess.has(num)
-    );
   };
 
   const processElement = (currentElement) => {
     const parentLi = currentElement.closest("li");
     if (shouldSkipProcessing(parentLi)) return;
 
-    if (ppixiv === false) {
-      idValue = currentElement.dataset["gtmUserId"];
-      gtmValue = currentElement.dataset["gtmRecommendIllustId"];
-    }
-
-    if (ppixiv === true) {
-      idValue = currentElement.dataset["userId"];
-      gtmValue = currentElement.dataset["mediaId"];
-    }
+    const { idValue, gtmValue } = getIdAndGtmValues(currentElement);
 
     if (hideAuthor === true) {
       if (typeof idValue === "string") {
@@ -257,6 +235,22 @@ const getNumbers = (elements) => {
   processElements();
 
   return Array.from(numbers);
+};
+
+const getIdAndGtmValues = (currentElement) => {
+  let idValue, gtmValue;
+
+  if (ppixiv === false) {
+    idValue = currentElement.dataset["gtmUserId"];
+    gtmValue = currentElement.dataset["gtmRecommendIllustId"];
+  }
+
+  if (ppixiv === true) {
+    idValue = currentElement.dataset["userId"];
+    gtmValue = currentElement.dataset["mediaId"];
+  }
+
+  return { idValue, gtmValue };
 };
 
 const getStoredNumbers = () => {
