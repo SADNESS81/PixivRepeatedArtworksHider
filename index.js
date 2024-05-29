@@ -7,7 +7,7 @@
 // @grant        GM_setValue
 // @grant        GM_listValues
 // @inject-into  content
-// @version     1.5
+// @version     1.8
 // @author      SADNESS81
 // @description Hides an artwork after it appears 3 times
 // @license      MIT
@@ -34,58 +34,37 @@ const grabAndStoreNumbers = async (entry) => {
 };
 
 const selectElement = (entry) => {
-  const baseSelector =
-    ppixiv === false
-      ? "#root > div.charcoal-token > div > div:nth-child(3) > div"
-      : "body";
-  const selectors =
+  const ppixivSelector =
     ppixiv === false
       ? [
-          `div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li:not([style="display: none;"]) > div > div.sc-iasfms-3.frFjhu > div > a`,
-          `div.gtm-illust-recommend-zone > div > div > div > div > ul > li > div > div.sc-iasfms-3.frFjhu > div > a`,
-          `div.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt > div.sc-1kr69jw-2.hYTIUt > div.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div > div > div.sc-iasfms-3.frFjhu > div > a`,
-          `div > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone > ul > li > div > div.sc-iasfms-3.frFjhu > div > a`,
+          `.gtm-illust-recommend-zone a:not([style*="display: none;"])`,
+          `.gtm-illust-recommend-zone .frFjhu a`,
+          `.gtm-toppage-thumbnail-illustration-recommend-works-zone .frFjhu a`,
         ]
-      : [
-          `div.screen.screen-search-container.widget > div.search-results.scroll-container > vv-container > div > div.thumbnails > div > div > a`,
-        ];
+      : [`.screen-search-container .search-results .thumbnails a`];
 
-  const combinedSelector = entry
-    ? entry.target.querySelectorAll(
-        selectors.map((selector) => `${baseSelector} > ${selector}`).join(", ")
-      )
-    : `${baseSelector} > ${selectors.join(", ")} `;
-  return combinedSelector;
+  const baseSelector =
+    ppixiv === false ? "#root .charcoal-token > div" : "body";
+  const selectors = ppixivSelector
+    .map((selector) => `${baseSelector} ${selector}`)
+    .join(", ");
+
+  return entry ? entry.target.querySelectorAll(selectors) : selectors;
 };
 
 const hideElements = async () => {
-  if (ppixiv === false) {
-    selectors = [
-      "#root > div.charcoal-token > div > div:nth-child(3) > div > div > div > section > div.sc-s8zj3z-4.gjeneI > div.sc-ikag3o-0.dRXTLR > div > div > ul > li",
-      "#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone > div > div > div > div > ul > li",
-      "#root > div.charcoal-token > div > div:nth-child(3) > div > div.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt > div.sc-1kr69jw-2.hYTIUt > div.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div",
-      "#root > div.charcoal-token > div > div:nth-child(3) > div > div > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li",
-      "#root > div.charcoal-token > div > div:nth-child(3) > div > div > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone > ul > li",
-    ];
-  }
-
-  if (ppixiv === true) {
-    selectors = [
-      "body > div.screen.screen-search-container.widget > div.search-results.scroll-container > vv-container > div > div.thumbnails > div > div",
-    ];
-  }
+  let selectors =
+    ppixiv === false
+      ? [
+          ".sc-s8zj3z-4.gjeneI > .sc-ikag3o-0.dRXTLR ul > li",
+          ".gtm-illust-recommend-zone ul > li",
+          ".gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li",
+        ]
+      : [".screen-search-container .search-results .thumbnails > div"];
 
   try {
-    const [firstElement, ...remainingElements] = document.querySelectorAll(
-      selectors.join(", ")
-    );
-
-    if (!firstElement) return;
-
-    await Promise.all([
-      hideElement(firstElement),
-      ...remainingElements.map((element) => hideElement(element)),
-    ]);
+    const elements = document.querySelectorAll(selectors.join(", "));
+    await Promise.all([...elements].map((element) => hideElement(element)));
   } catch (error) {
     console.error("Error:", error);
     throw error;
@@ -94,7 +73,15 @@ const hideElements = async () => {
 
 const hideElement = async (element) => {
   try {
-    if (ppixiv === true) {
+    const isPPixiv = ppixiv === true;
+    const isReprocessedSelector = isPPixiv
+      ? "a.reprocessed"
+      : "div > div.sc-iasfms-3.frFjhu > div > a.reprocessed";
+    const isReprocessed = Array.from(
+      element.querySelectorAll(isReprocessedSelector)
+    ).some((el) => el.style.display !== "none");
+
+    if (isPPixiv) {
       const pagesToIgnore = [
         "bookmarks",
         "artworks",
@@ -103,42 +90,18 @@ const hideElement = async (element) => {
         "complete",
         "users",
       ];
-
-      if (pagesToIgnore.some((page) => window.location.href.includes(page))) {
+      if (pagesToIgnore.some((page) => window.location.href.includes(page)))
         return;
-      }
-    }
 
-    const isReprocessedSelector =
-      ppixiv === false
-        ? "div > div.sc-iasfms-3.frFjhu > div > a.reprocessed"
-        : "a.reprocessed";
-
-    const isReprocessed = Array.from(
-      element.querySelectorAll(isReprocessedSelector)
-    ).some((el) => el.style.display !== "none");
-
-    if (isReprocessed && dimRepeated === false && ppixiv === true) {
-      const parent = element.parentNode;
-      const isLastElement = element.nextElementSibling === null;
-      if (isLastElement) {
-        parent.remove();
-        element.remove();
-      } else {
+      if (isReprocessed && !dimRepeated) {
+        if (element.nextElementSibling === null) element.parentNode.remove();
         element.remove();
       }
-    }
 
-    if (dimRepeated === true && isReprocessed && ppixiv === true) {
-      element.style.opacity = "0.2";
-    }
-
-    if (isReprocessed && dimRepeated === false && ppixiv === false) {
-      element.style.display = "none";
-    }
-
-    if (dimRepeated === true && isReprocessed && ppixiv === false) {
-      element.style.opacity = "0.2";
+      if (dimRepeated && isReprocessed) element.style.opacity = "0.2";
+    } else {
+      if (isReprocessed && !dimRepeated) element.style.display = "none";
+      if (dimRepeated && isReprocessed) element.style.opacity = "0.2";
     }
   } catch (error) {
     console.error("Error hiding artwork:", error.message);
@@ -150,60 +113,47 @@ const noReprocess = new Set();
 const getNumbers = (elements) => {
   const numbers = new Set();
   const storedNumbers = new Set(getStoredNumbers());
+  const currentHref = window.location.href;
 
-  if (ppixiv === true) {
-    const pagesToIgnore = [
+  if (ppixiv) {
+    const pagesToIgnore = new Set([
       "bookmarks",
       "artworks",
       "ranking",
       "bookmark_new_illust",
       "complete",
       "users",
-    ];
+    ]);
 
-    if (pagesToIgnore.some((page) => window.location.href.includes(page))) {
-      return;
+    if ([...pagesToIgnore].some((page) => currentHref.includes(page))) {
+      return [];
     }
   }
 
   const shouldSkipProcessing = (parentLi) => parentLi?.style.display === "none";
 
   const processGtmValue = (gtmValue, currentElement) => {
-    regex = ppixiv === false ? /\b(\d+)\b/g : /\b(\d+)-(\d+)\b|\b(\d+)\b/g;
+    const regex = ppixiv ? /\b(\d+)-(\d+)\b|\b(\d+)\b/g : /\b(\d+)\b/g;
 
     let match;
     while ((match = regex.exec(gtmValue)) !== null) {
-      const num =
-        ppixiv === false ? Number(match[1]) : Number(match[1] || match[3]);
+      const num = ppixiv ? Number(match[1] || match[3]) : Number(match[1]);
 
-      if (num !== 0) {
-        if (!storedNumbers.has(num)) {
-          numbers.add(num);
-          currentElement.classList.add("processed");
-          noReprocess.add(num);
-        } else {
-          const currentValue = getNumberCount(num);
+      if (num !== 0 && !storedNumbers.has(num)) {
+        numbers.add(num);
+        currentElement.classList.add("processed");
+        noReprocess.add(num);
+      } else if (storedNumbers.has(num) && !noReprocess.has(num)) {
+        const currentValue = getNumberCount(num);
 
-          if (
-            storedNumbers.has(num) &&
-            !noReprocess.has(num) &&
-            currentValue <= maxRepetitions
-          ) {
-            if (maxRepetitions == 1) {
-              GM_setValue(`${num}`, currentValue + 1);
-              currentElement.classList.add("reprocessed");
-            } else {
-              noReprocess.add(num);
-              GM_setValue(`${num}`, currentValue + 1);
-              currentElement.classList.add("processed2");
-            }
-          } else if (
-            storedNumbers.has(num) &&
-            currentValue >= maxRepetitions &&
-            !noReprocess.has(num)
-          ) {
-            currentElement.classList.add("reprocessed");
-          }
+        if (currentValue < maxRepetitions) {
+          GM_setValue(`${num}`, currentValue + 1);
+          currentElement.classList.add(
+            maxRepetitions == 1 ? "reprocessed" : "processed2"
+          );
+          if (maxRepetitions != 1) noReprocess.add(num);
+        } else if (currentValue >= maxRepetitions) {
+          currentElement.classList.add("reprocessed");
         }
       }
     }
@@ -226,13 +176,9 @@ const getNumbers = (elements) => {
     }
   };
 
-  const processElements = () => {
-    if (elements && elements.length > 0) {
-      elements.forEach(processElement);
-    }
-  };
-
-  processElements();
+  if (elements && elements.length > 0) {
+    elements.forEach(processElement);
+  }
 
   return Array.from(numbers);
 };
@@ -255,13 +201,7 @@ const getIdAndGtmValues = (currentElement) => {
 
 const getStoredNumbers = () => {
   try {
-    const keys = GM_listValues();
-    let storedNumbers = [];
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
-      storedNumbers.push(JSON.parse(key)); // Assuming values are strings and need parsing
-    }
-    return storedNumbers;
+    return GM_listValues().map((key) => JSON.parse(key));
   } catch (error) {
     console.error(`Error retrieving keys from storage: ${error.message}`);
     return [];
@@ -270,8 +210,7 @@ const getStoredNumbers = () => {
 
 const getNumberCount = (num) => {
   try {
-    const count = GM_getValue(`${num}`, 0);
-    return count;
+    return GM_getValue(`${num}`, 0);
   } catch (gmError) {
     console.error(`Error getting count for value ${num}: ${gmError.message}`);
     throw gmError;
@@ -279,11 +218,9 @@ const getNumberCount = (num) => {
 };
 
 const storeNumbers = (numbers) => {
-  if (!numbers || !Array.isArray(numbers) || numbers.length === 0)
+  if (!numbers?.length)
     throw new Error("Input must be a non-empty array of numbers");
-
   const storedNumbers = new Set(getStoredNumbers());
-
   for (const num of numbers) {
     if (
       typeof num === "number" &&
@@ -301,26 +238,25 @@ const storeNumbers = (numbers) => {
       }
     }
   }
-
-  if (storedNumbers.size === 0) {
+  if (!storedNumbers.size)
     console.log("No valid, unique numbers found in the input array");
+};
+
+function clearNoReprocess() {
+  noReprocess.clear();
+  console.log("noReprocess Cleared");
+}
+
+let lastHref = window.location.href;
+const checkURL = () => {
+  const currentHref = window.location.href;
+  if (currentHref !== lastHref) {
+    clearNoReprocess();
+    lastHref = currentHref;
   }
 };
 
 if (countWithoutRefresh === true) {
-  function clearNoReprocess() {
-    noReprocess.clear();
-    console.log("noReprocess Cleared");
-  }
-
-  let lastHref = window.location.href;
-  const checkURL = () => {
-    const currentHref = window.location.href;
-    if (currentHref !== lastHref) {
-      clearNoReprocess();
-      lastHref = currentHref;
-    }
-  };
   setInterval(checkURL, 1000);
 }
 
@@ -355,42 +291,35 @@ const configureMutationObserver = (callback, targetElement) => {
 };
 
 if (ppixiv === false) {
-  baseSelector =
-    "#root > div.charcoal-token > div > div:nth-child(3) > div > div";
+  const baseSelector = "#root .charcoal-token > div > div > div";
   targetSelector = [
-    `${baseSelector}.gtm-illust-recommend-zone > div > div > div > div > ul > li`,
-    `${baseSelector} > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone > div > div > ul > li`,
-    `${baseSelector}.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt > div.sc-1kr69jw-2.hYTIUt > div.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div`,
-    `${baseSelector} > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone > ul > li`,
+    `${baseSelector} .gtm-illust-recommend-zone ul > li`,
+    `${baseSelector} aside:nth-child(4) .gtm-illust-recommend-zone ul > li`,
+    `${baseSelector} .gtm-illust-recommend-zone .sc-jeb5bb-1.dSVJt .sc-1kr69jw-2.hYTIUt .sc-1kr69jw-3.wJpxo ul > div > div > div.sc-1kr69jw-3.wJpxo ul > div > div`,
+    `${baseSelector} .gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li`,
   ].join(", ");
 
   targetElement = [
-    `${baseSelector}.gtm-illust-recommend-zone`,
-    `${baseSelector} > aside:nth-child(4) > div > section > div.gtm-illust-recommend-zone`,
-    `${baseSelector}.gtm-illust-recommend-zone > div.sc-jeb5bb-1.dSVJt`,
-    `${baseSelector} > div > section > div.gtm-toppage-thumbnail-illustration-recommend-works-zone`,
-  ].join(", ");
-}
-
-if (ppixiv === true) {
-  targetSelector = [
-    `body > div.screen.screen-search-container.widget > div.search-results.scroll-container > vv-container > div > div.thumbnails > div > div`,
+    `${baseSelector} .gtm-illust-recommend-zone`,
+    `${baseSelector} aside:nth-child(4) .gtm-illust-recommend-zone`,
+    `${baseSelector} .gtm-illust-recommend-zone .sc-jeb5bb-1.dSVJt`,
+    `${baseSelector} .gtm-toppage-thumbnail-illustration-recommend-works-zone`,
   ].join(", ");
 
-  targetElement = [
-    `body > div.screen.screen-search-container.widget > div.search-results.scroll-container > vv-container > div > div.thumbnails`,
-  ].join(", ");
-}
-
-if (ppixiv === false) {
   options = {
     root: null,
     rootMargin: "1200px",
     threshold: 0.5,
   };
-}
+} else {
+  targetSelector = [
+    `body .screen-search-container .search-results .thumbnails > div`,
+  ].join(", ");
 
-if (ppixiv === true) {
+  targetElement = [
+    `body .screen-search-container .search-results .thumbnails`,
+  ].join(", ");
+
   options = {
     root: null,
     rootMargin: "9600px",
