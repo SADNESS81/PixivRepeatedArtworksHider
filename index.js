@@ -7,7 +7,7 @@
 // @grant        GM_setValue
 // @grant        GM_listValues
 // @inject-into  content
-// @version     1.8
+// @version     1.9
 // @author      SADNESS81
 // @description Hides an artwork after it appears 3 times
 // @license      MIT
@@ -26,6 +26,8 @@ const countWithoutRefresh = false; // Will count the artwork as repeated if you 
 /*-----------------------------*/
 
 let ppixiv = false;
+let lastHref = window.location.href;
+const noReprocess = new Set();
 
 const grabAndStoreNumbers = async (entry) => {
   const elements = selectElement(entry);
@@ -37,30 +39,30 @@ const selectElement = (entry) => {
   const ppixivSelector =
     ppixiv === false
       ? [
-          `.gtm-illust-recommend-zone a:not([style*="display: none;"])`,
-          `.gtm-illust-recommend-zone .frFjhu a`,
-          `.gtm-toppage-thumbnail-illustration-recommend-works-zone .frFjhu a`,
+          `#illust-recommend > ul > li > a.user.ui-profile-popup.js-click-trackable.gtm-illust-recommend-user-name`,
+          `.sc-iasfms-3.frFjhu a`,
         ]
-      : [`.screen-search-container .search-results .thumbnails a`];
+      : [`.thumbnails a`];
 
-  const baseSelector =
-    ppixiv === false ? "#root .charcoal-token > div" : "body";
-  const selectors = ppixivSelector
-    .map((selector) => `${baseSelector} ${selector}`)
-    .join(", ");
-
-  return entry ? entry.target.querySelectorAll(selectors) : selectors;
+  return entry ? entry.target.querySelectorAll(ppixivSelector) : ppixivSelector;
 };
 
 const hideElements = async () => {
   let selectors =
     ppixiv === false
       ? [
-          ".sc-s8zj3z-4.gjeneI > .sc-ikag3o-0.dRXTLR ul > li",
-          ".gtm-illust-recommend-zone ul > li",
-          ".gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li",
+          `.sc-s8zj3z-4.gjeneI > .sc-ikag3o-0.dRXTLR ul > li`,
+          `.gtm-illust-recommend-zone ul > li`,
+          `.gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li`,
+          `.gtm-toppage-thumbnail-r18-illustration-recommend-works-zone > ul > li`,
+          `.gtm-toppage-thumbnail-illustration-recommend-tag-zone ul > li`,
+          `.gtm-toppage-thumbnail-r18-illustration-recommend-tag-zone ul > li`,
+          `#illust-recommend > ul > li`,
+          `.sc-l7cibp-0.juyBTC ul > li`,
+          `.sc-1kr69jw-4.gueEHy ul > div`,
+          `.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div`,
         ]
-      : [".screen-search-container .search-results .thumbnails > div"];
+      : [".thumbnails > div > div"];
 
   try {
     const elements = document.querySelectorAll(selectors.join(", "));
@@ -73,47 +75,39 @@ const hideElements = async () => {
 
 const hideElement = async (element) => {
   try {
-    const isPPixiv = ppixiv === true;
-    const isReprocessedSelector = isPPixiv
-      ? "a.reprocessed"
-      : "div > div.sc-iasfms-3.frFjhu > div > a.reprocessed";
     const isReprocessed = Array.from(
-      element.querySelectorAll(isReprocessedSelector)
-    ).some((el) => el.style.display !== "none");
+      element.querySelectorAll("a.reprocessed")
+    ).some((el) => getComputedStyle(el).display !== "none");
 
-    if (isPPixiv) {
-      const pagesToIgnore = [
-        "bookmarks",
-        "artworks",
-        "ranking",
-        "bookmark_new_illust",
-        "complete",
-        "users",
-      ];
-      if (pagesToIgnore.some((page) => window.location.href.includes(page)))
-        return;
-
-      if (isReprocessed && !dimRepeated) {
-        if (element.nextElementSibling === null) element.parentNode.remove();
-        element.remove();
+    if (
+      ppixiv &&
+      !window.location.href.match(
+        /(bookmarks|artworks|ranking|bookmark_new_illust|complete|users)/
+      )
+    ) {
+      if (isReprocessed) {
+        if (!dimRepeated) {
+          if (element.nextElementSibling === null) element.parentNode.remove();
+          element.remove();
+        } else {
+          element.style.opacity = "0.2";
+        }
       }
-
-      if (dimRepeated && isReprocessed) element.style.opacity = "0.2";
-    } else {
-      if (isReprocessed && !dimRepeated) element.style.display = "none";
-      if (dimRepeated && isReprocessed) element.style.opacity = "0.2";
+    } else if (isReprocessed) {
+      if (!dimRepeated) {
+        element.style.display = "none";
+      } else {
+        element.style.opacity = "0.2";
+      }
     }
   } catch (error) {
     console.error("Error hiding artwork:", error.message);
   }
 };
 
-const noReprocess = new Set();
-
 const getNumbers = (elements) => {
   const numbers = new Set();
   const storedNumbers = new Set(getStoredNumbers());
-  const currentHref = window.location.href;
 
   if (ppixiv) {
     const pagesToIgnore = new Set([
@@ -125,7 +119,7 @@ const getNumbers = (elements) => {
       "users",
     ]);
 
-    if ([...pagesToIgnore].some((page) => currentHref.includes(page))) {
+    if ([...pagesToIgnore].some((page) => lastHref.includes(page))) {
       return [];
     }
   }
@@ -134,8 +128,8 @@ const getNumbers = (elements) => {
 
   const processGtmValue = (gtmValue, currentElement) => {
     const regex = ppixiv ? /\b(\d+)-(\d+)\b|\b(\d+)\b/g : /\b(\d+)\b/g;
-
     let match;
+
     while ((match = regex.exec(gtmValue)) !== null) {
       const num = ppixiv ? Number(match[1] || match[3]) : Number(match[1]);
 
@@ -145,15 +139,16 @@ const getNumbers = (elements) => {
         noReprocess.add(num);
       } else if (storedNumbers.has(num) && !noReprocess.has(num)) {
         const currentValue = getNumberCount(num);
-
-        if (currentValue < maxRepetitions) {
+        currentElement.classList.add(
+          currentValue < maxRepetitions
+            ? maxRepetitions == 1
+              ? "reprocessed"
+              : "processed2"
+            : "reprocessed"
+        );
+        if (currentValue < maxRepetitions && maxRepetitions != 1) {
           GM_setValue(`${num}`, currentValue + 1);
-          currentElement.classList.add(
-            maxRepetitions == 1 ? "reprocessed" : "processed2"
-          );
-          if (maxRepetitions != 1) noReprocess.add(num);
-        } else if (currentValue >= maxRepetitions) {
-          currentElement.classList.add("reprocessed");
+          noReprocess.add(num);
         }
       }
     }
@@ -184,17 +179,15 @@ const getNumbers = (elements) => {
 };
 
 const getIdAndGtmValues = (currentElement) => {
-  let idValue, gtmValue;
+  const getValue = (...keys) =>
+    keys.reduce((acc, key) => acc || currentElement.dataset[key], null);
 
-  if (ppixiv === false) {
-    idValue = currentElement.dataset["gtmUserId"];
-    gtmValue = currentElement.dataset["gtmRecommendIllustId"];
-  }
-
-  if (ppixiv === true) {
-    idValue = currentElement.dataset["userId"];
-    gtmValue = currentElement.dataset["mediaId"];
-  }
+  const idValue = ppixiv
+    ? getValue("userId")
+    : getValue("gtmUserId", "user_id");
+  const gtmValue = ppixiv
+    ? getValue("mediaId")
+    : getValue("gtmRecommendIllustId", "gtmValue");
 
   return { idValue, gtmValue };
 };
@@ -247,7 +240,6 @@ function clearNoReprocess() {
   console.log("noReprocess Cleared");
 }
 
-let lastHref = window.location.href;
 const checkURL = () => {
   const currentHref = window.location.href;
   if (currentHref !== lastHref) {
@@ -266,22 +258,21 @@ if (window.location.href.includes("#ppixiv")) {
 }
 
 const intersectionCallback = (entries, observer) => {
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
+  entries.forEach((entry) => {
     if (entry.isIntersecting) {
       grabAndStoreNumbers(entry);
       hideElements();
     }
-  }
+  });
 };
 
 const createIntersectionObserver = (callback, options) =>
   new IntersectionObserver(callback, options);
 
 const observeElements = (observer, elements) => {
-  for (let i = 0; i < elements.length; i++) {
-    observer.observe(elements[i]);
-  }
+  elements.forEach((element) => {
+    observer.observe(element);
+  });
 };
 
 const configureMutationObserver = (callback, targetElement) => {
@@ -290,42 +281,41 @@ const configureMutationObserver = (callback, targetElement) => {
   return observer;
 };
 
-if (ppixiv === false) {
-  const baseSelector = "#root .charcoal-token > div > div > div";
-  targetSelector = [
-    `${baseSelector} .gtm-illust-recommend-zone ul > li`,
-    `${baseSelector} aside:nth-child(4) .gtm-illust-recommend-zone ul > li`,
-    `${baseSelector} .gtm-illust-recommend-zone .sc-jeb5bb-1.dSVJt .sc-1kr69jw-2.hYTIUt .sc-1kr69jw-3.wJpxo ul > div > div > div.sc-1kr69jw-3.wJpxo ul > div > div`,
-    `${baseSelector} .gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li`,
-  ].join(", ");
+const selectors = ppixiv
+  ? [`.thumbnails > div > div`]
+  : [
+      `.gtm-illust-recommend-zone ul > li`,
+      `aside:nth-child(4) .gtm-illust-recommend-zone ul > li`,
+      `.gtm-illust-recommend-zone .sc-jeb5bb-1.dSVJt .sc-1kr69jw-2.hYTIUt .sc-1kr69jw-3.wJpxo ul > div > div > div.sc-1kr69jw-3.wJpxo ul > div > div`,
+      `.gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li`,
+      `#illust-recommend > ul > li`,
+      `.sc-l7cibp-0.juyBTC ul > li`,
+      `.gtm-toppage-thumbnail-illustration-recommend-tag-zone ul > li`,
+      `.gtm-toppage-thumbnail-r18-illustration-recommend-tag-zone ul > li`,
+      `.gtm-toppage-thumbnail-r18-illustration-recommend-works-zone ul > li`,
+      //`.sc-1kr69jw-4.gueEHy ul > div`,
+    ];
 
-  targetElement = [
-    `${baseSelector} .gtm-illust-recommend-zone`,
-    `${baseSelector} aside:nth-child(4) .gtm-illust-recommend-zone`,
-    `${baseSelector} .gtm-illust-recommend-zone .sc-jeb5bb-1.dSVJt`,
-    `${baseSelector} .gtm-toppage-thumbnail-illustration-recommend-works-zone`,
-  ].join(", ");
+const elements = ppixiv
+  ? [`.thumbnails`]
+  : [
+      `.gtm-illust-recommend-zone`,
+      `aside:nth-child(4) .gtm-illust-recommend-zone`,
+      `.gtm-illust-recommend-zone .sc-jeb5bb-1.dSVJt`,
+      `.gtm-toppage-thumbnail-illustration-recommend-works-zone ul`,
+      `#illust-recommend`,
+      `.sc-l7cibp-0.juyBTC`,
+      `.gtm-toppage-thumbnail-illustration-recommend-tag-zone ul`,
+      `.gtm-toppage-thumbnail-r18-illustration-recommend-tag-zone ul`,
+      //`.sc-1kr69jw-4.gueEHy ul`,
+    ];
 
-  options = {
-    root: null,
-    rootMargin: "1200px",
-    threshold: 0.5,
-  };
-} else {
-  targetSelector = [
-    `body .screen-search-container .search-results .thumbnails > div`,
-  ].join(", ");
+const options = ppixiv
+  ? { root: null, rootMargin: "9600px", threshold: 0.1 }
+  : { root: null, rootMargin: "1200px", threshold: 0.5 };
 
-  targetElement = [
-    `body .screen-search-container .search-results .thumbnails`,
-  ].join(", ");
-
-  options = {
-    root: null,
-    rootMargin: "9600px",
-    threshold: 0.1,
-  };
-}
+targetSelector = selectors.join(", ");
+targetElement = elements.join(", ");
 
 function createIntersectionAndMutationObserver(
   intersectionCallback,
