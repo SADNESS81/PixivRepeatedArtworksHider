@@ -5,10 +5,11 @@
 // @icon          https://www.google.com/s2/favicons?domain=pixiv.net
 // @grant         GM_getValue
 // @grant         GM_setValue
+// @grant         GM_deleteValue
 // @grant         GM_listValues
 // @inject-into   content
 // @run-at        document-idle
-// @version       2.0
+// @version       2.1
 // @author        SADNESS81
 // @description   Hides an artwork after it appears 3 times
 // @license       MIT
@@ -22,11 +23,14 @@ const settings = {
   maxRepetitions: 3,
   hideAuthor: false,
   dimRepeated: false,
+  whitelistFollowed: true,
 };
 
 Object.keys(settings).forEach((key) => {
   settings[key] = getOrSetValue(key, settings[key]);
 });
+
+const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 
 if (window.location.href.includes("#ppixiv")) {
   ppixiv = true;
@@ -34,80 +38,202 @@ if (window.location.href.includes("#ppixiv")) {
 }
 
 const grabAndStoreNumbers = async (entry) => {
-  const elements = selectElement(entry);
-  const numbers = elements?.length > 0 && getNumbers(elements);
-  numbers?.length > 0 && storeNumbers(numbers);
+  const numbers = getNumbers(selectElement(entry));
+  numbers.length > 0 && storageManager.storeNumbers(numbers);
 };
 
-const getNumbers = (elements) => {
-  const numbers = new Set();
-  const storedNumbers = new Set(getStoredNumbers());
+const checkReprocessed = (currentElement, num, currentValue) => {
+  if (
+    noReprocess.has(num) ||
+    !storageManager.getStoredNumbers().includes(num) ||
+    GM_getValue("Following", []).includes(num)
+  ) {
+    return;
+  }
 
-  if (ppixiv) {
-    const pagesToIgnore = new Set([
+  if (
+    currentValue >= settings.maxRepetitions ||
+    (currentValue < settings.maxRepetitions && settings.maxRepetitions === 1)
+  ) {
+    currentElement.classList.add("reprocessed");
+  }
+};
+
+const whitelistFollowing = async (element, task, action) => {
+  if (!settings.whitelistFollowed) {
+    GM_deleteValue("Account");
+    GM_deleteValue("Following");
+    return;
+  }
+
+  const userId = parseInt(
+    document.querySelector("#qualtrics_user-id")?.textContent
+  );
+
+  if (!userId) return;
+
+  let user = GM_getValue("Account");
+  let value = GM_getValue("Following", []);
+  let times = GM_getValue("Times", 0);
+
+  if (times < 10) {
+    times++;
+    GM_setValue("Times", times);
+  } else {
+    times = 0;
+    GM_setValue("Times", times);
+    whitelistFollowing(null, "two", null);
+  }
+
+  if (user !== userId) {
+    GM_setValue("Account", userId);
+    GM_setValue("Following", []);
+    value = [];
+    user = userId;
+  }
+
+  if (task === "one" && value.length !== 0) {
+    const { idValue } = storageManager.getElementValues(element);
+    if (
+      idValue &&
+      ((action === "add" && !value.includes(idValue)) ||
+        (action === "remove" && value.includes(idValue)))
+    ) {
+      value =
+        action === "add"
+          ? [...value, idValue]
+          : value.filter((v) => v !== idValue);
+      GM_setValue("Following", value);
+    }
+    GM_deleteValue(idValue.toString());
+  }
+
+  if (value.length === 0 || task === "two") {
+    const fetchFollowing = async (restType) => {
+      let offset = 0,
+        total = 0;
+      try {
+        while (offset === 0 || offset < total) {
+          await delay(1000);
+          const data = await fetch(
+            `https://www.pixiv.net/ajax/user/${userId}/following?offset=${offset}&limit=100&rest=${restType}`
+          ).then((res) => res.json());
+          if (data.body?.users) {
+            value = [
+              ...new Set([
+                ...value,
+                ...data.body.users.map((user) => user.userId),
+              ]),
+            ];
+            total = offset === 0 ? data.body.total : total;
+            offset += 100;
+          }
+        }
+      } catch (error) {
+        console.error(
+          `Error fetching following list for rest=${restType}:`,
+          error
+        );
+      }
+    };
+
+    for (const restType of ["show", "hide"]) {
+      await fetchFollowing(restType);
+    }
+
+    GM_setValue("Following", value);
+    value.forEach((id) => GM_deleteValue(id.toString()));
+  }
+};
+
+whitelistFollowing();
+
+const getNumbers = (elements, task) => {
+  const numbers = new Set();
+  const storedNumbers = new Set(storageManager.getStoredNumbers());
+  const following = new Set(GM_getValue("Following", []));
+
+  if (
+    ppixiv &&
+    [
       "bookmarks",
       "artworks",
       "ranking",
       "bookmark_new_illust",
       "complete",
       "users",
-    ]);
-
-    if ([...pagesToIgnore].some((page) => lastHref.includes(page))) {
-      return [];
-    }
+    ].some((page) => lastHref.includes(page))
+  ) {
+    return [];
   }
 
-  const processGtmValue = (gtmValue, currentElement) => {
-    const regex = ppixiv ? /\b(\d+)-(\d+)\b|\b(\d+)\b/g : /\b(\d+)\b/g;
+  if (!elements || elements.length === 0) {
+    return [];
+  }
+
+  const regex = ppixiv ? /\b(\d+)-(\d+)\b|\b(\d+)\b/g : /\b(\d+)\b/g;
+
+  elements.forEach((currentElement) => {
+    const { idValue, gtmValue } =
+      storageManager.getElementValues(currentElement);
+    const value = settings.hideAuthor ? idValue : gtmValue;
+
+    if (!value) {
+      return;
+    }
+
     let match;
+    while ((match = regex.exec(value)) !== null) {
+      const num = Number(ppixiv ? match[1] || match[3] : match[1]);
 
-    while ((match = regex.exec(gtmValue)) !== null) {
-      const num = ppixiv ? Number(match[1] || match[3]) : Number(match[1]);
+      if (!num) {
+        continue;
+      }
 
-      if (num !== 0 && !storedNumbers.has(num)) {
-        numbers.add(num);
-        currentElement.classList.add("processed");
-        noReprocess.add(num);
-      } else if (storedNumbers.has(num) && !noReprocess.has(num)) {
-        const currentValue = getNumberCount(num);
-        currentElement.classList.add(
-          currentValue < settings.maxRepetitions
-            ? settings.maxRepetitions == 1
-              ? "reprocessed"
-              : "processed2"
-            : "reprocessed"
+      const currentValue = storageManager.getNumberCount(num);
+
+      if (task === "checkReprocessed") {
+        checkReprocessed(currentElement, num, currentValue);
+      }
+
+      if (
+        !settings.whitelistFollowed ||
+        (!following.has(idValue) && settings.whitelistFollowed)
+      ) {
+        processNumbers(
+          currentElement,
+          num,
+          currentValue,
+          storedNumbers,
+          numbers
         );
-        if (
-          currentValue < settings.maxRepetitions &&
-          settings.maxRepetitions != 1
-        ) {
-          GM_setValue(`${num}`, currentValue + 1);
-          noReprocess.add(num);
-        }
       }
     }
-  };
-
-  const processElement = (currentElement) => {
-    const { idValue, gtmValue } = getIdAndGtmValues(currentElement);
-
-    if (settings.hideAuthor === true) {
-      if (typeof idValue === "string") {
-        processGtmValue(idValue, currentElement);
-      }
-    } else {
-      if (typeof gtmValue === "string") {
-        processGtmValue(gtmValue, currentElement);
-      }
-    }
-  };
-
-  if (elements && elements.length > 0) {
-    elements.forEach(processElement);
-  }
+  });
 
   return Array.from(numbers);
+};
+
+const processNumbers = (
+  currentElement,
+  num,
+  currentValue,
+  storedNumbers,
+  numbers
+) => {
+  if (!storedNumbers.has(num)) {
+    numbers.add(num);
+    currentElement.classList.add("processed");
+    noReprocess.add(num);
+  } else if (
+    !noReprocess.has(num) &&
+    currentValue < settings.maxRepetitions &&
+    settings.maxRepetitions !== 1
+  ) {
+    GM_setValue(`${num}`, currentValue + 1);
+    currentElement.classList.add("processed2");
+    noReprocess.add(num);
+  }
 };
 
 function getOrSetValue(key, defaultValue) {
@@ -119,64 +245,62 @@ function getOrSetValue(key, defaultValue) {
   return value;
 }
 
-const getIdAndGtmValues = (currentElement) => {
-  const getValue = (...keys) =>
-    keys.reduce((acc, key) => acc || currentElement.dataset[key], null);
-
-  const idValue = ppixiv
-    ? getValue("userId")
-    : getValue("gtmUserId", "user_id");
-  const gtmValue = ppixiv
-    ? getValue("mediaId")
-    : getValue("gtmRecommendIllustId", "gtmValue");
-
-  return { idValue, gtmValue };
-};
-
-const getStoredNumbers = () => {
-  try {
-    const excludedKeys = ["maxRepetitions", "hideAuthor", "dimRepeated"];
-    return GM_listValues()
-      .filter((key) => !excludedKeys.includes(key))
-      .map((key) => JSON.parse(key));
-  } catch (error) {
-    console.error(`Error retrieving keys from storage: ${error.message}`);
-    return [];
-  }
-};
-
-const getNumberCount = (num) => {
-  try {
-    return GM_getValue(`${num}`, 0);
-  } catch (gmError) {
-    console.error(`Error getting count for value ${num}: ${gmError.message}`);
-    throw gmError;
-  }
-};
-
-const storeNumbers = (numbers) => {
-  if (!numbers?.length)
-    throw new Error("Input must be a non-empty array of numbers");
-  const storedNumbers = new Set(getStoredNumbers());
-  for (const num of numbers) {
-    if (
-      typeof num === "number" &&
-      !isNaN(num) &&
-      num >= 0 &&
-      Number.isInteger(num) &&
-      !storedNumbers.has(num)
-    ) {
-      try {
-        GM_setValue(`${num}`, getNumberCount(num) + 1);
-        storedNumbers.add(num);
-      } catch (gmError) {
-        console.error(`Error storing value ${num}: ${gmError.message}`);
-        throw gmError;
-      }
+const storageManager = {
+  getStoredNumbers: () => {
+    try {
+      const excludedKeys = [
+        "maxRepetitions",
+        "hideAuthor",
+        "dimRepeated",
+        "whitelistFollowed",
+        "Account",
+        "Following",
+        "Times",
+      ];
+      return GM_listValues()
+        .filter((key) => !excludedKeys.includes(key))
+        .map((key) => JSON.parse(key));
+    } catch (error) {
+      console.error(`Error retrieving keys from storage: ${error.message}`);
+      return [];
     }
-  }
-  if (!storedNumbers.size)
-    console.log("No valid, unique numbers found in the input array");
+  },
+
+  getNumberCount: (num) => {
+    try {
+      return GM_getValue(`${num}`, 0);
+    } catch (gmError) {
+      console.error(`Error getting count for value ${num}: ${gmError.message}`);
+      throw gmError;
+    }
+  },
+
+  storeNumbers: (numbers) => {
+    const storedNumbers = new Set(storageManager.getStoredNumbers());
+    numbers
+      .filter((num) => !isNaN(num) && num >= 0 && !storedNumbers.has(num))
+      .forEach((num) => {
+        try {
+          GM_setValue(`${num}`, storageManager.getNumberCount(num) + 1);
+          storedNumbers.add(num);
+        } catch (gmError) {
+          console.error(`Error storing value ${num}: ${gmError.message}`);
+          throw gmError;
+        }
+      });
+  },
+
+  getElementValues: (currentElement) => {
+    const getValue = (...keys) =>
+      keys.reduce((acc, key) => acc || currentElement.dataset[key], null);
+    const idValue = ppixiv
+      ? getValue("userId")
+      : getValue("gtmUserId", "user_id");
+    const gtmValue = ppixiv
+      ? getValue("mediaId")
+      : getValue("gtmRecommendIllustId", "gtmValue");
+    return { idValue, gtmValue };
+  },
 };
 
 const selectElement = (entry) => {
@@ -191,54 +315,66 @@ const selectElement = (entry) => {
   return entry ? entry.target.querySelectorAll(ppixivSelector) : ppixivSelector;
 };
 
+const getSelectors = () => {
+  return ppixiv === false
+    ? [
+        `.sc-s8zj3z-4.gjeneI > .sc-ikag3o-0.dRXTLR ul > li`,
+        `.gtm-illust-recommend-zone ul > li`,
+        `.gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li`,
+        `.gtm-toppage-thumbnail-r18-illustration-recommend-works-zone > ul > li`,
+        `.gtm-toppage-thumbnail-illustration-recommend-tag-zone ul > li`,
+        `.gtm-toppage-thumbnail-r18-illustration-recommend-tag-zone ul > li`,
+        `#illust-recommend > ul > li`,
+        `.sc-l7cibp-0.juyBTC ul > li`,
+        `.sc-1kr69jw-4.gueEHy ul > div`,
+        `.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div`,
+      ]
+    : [".thumbnails > div > div"];
+};
+
+const isElementReprocessed = (element) => {
+  return Array.from(element.querySelectorAll("a.reprocessed")).some(
+    (el) => getComputedStyle(el).display !== "none"
+  );
+};
+
+const areAllSiblingsHidden = (element) => {
+  return Array.from(element.parentNode.children).every(
+    (sibling) => sibling.style.display === "none"
+  );
+};
+
+const hideOrDimElement = (element, allSiblingsHidden) => {
+  if (
+    ppixiv &&
+    !window.location.href.match(
+      /(bookmarks|artworks|ranking|bookmark_new_illust|complete|users)/
+    )
+  ) {
+    allSiblingsHidden
+      ? (element.parentNode.style.display = "none")
+      : (element.style.display = "none");
+  } else if (!settings.dimRepeated) {
+    element.style.display = "none";
+  } else {
+    element.style.opacity = "0.2";
+  }
+};
+
 const hideElements = async () => {
-  let selectors =
-    ppixiv === false
-      ? [
-          `.sc-s8zj3z-4.gjeneI > .sc-ikag3o-0.dRXTLR ul > li`,
-          `.gtm-illust-recommend-zone ul > li`,
-          `.gtm-toppage-thumbnail-illustration-recommend-works-zone ul > li`,
-          `.gtm-toppage-thumbnail-r18-illustration-recommend-works-zone > ul > li`,
-          `.gtm-toppage-thumbnail-illustration-recommend-tag-zone ul > li`,
-          `.gtm-toppage-thumbnail-r18-illustration-recommend-tag-zone ul > li`,
-          `#illust-recommend > ul > li`,
-          `.sc-l7cibp-0.juyBTC ul > li`,
-          `.sc-1kr69jw-4.gueEHy ul > div`,
-          `.sc-1kr69jw-3.wJpxo > ul > div > div > div.sc-1kr69jw-3.wJpxo > ul > div > div`,
-        ]
-      : [".thumbnails > div > div"];
+  const selectors = getSelectors();
 
   try {
     const elements = document.querySelectorAll(selectors.join(", "));
 
     await Promise.all(
-      [...elements].map(async (element) => {
+      Array.from(elements).map(async (element) => {
         try {
-          const isReprocessed = Array.from(
-            element.querySelectorAll("a.reprocessed")
-          ).some((el) => getComputedStyle(el).display !== "none");
+          const isReprocessed = isElementReprocessed(element);
+          const allSiblingsHidden = areAllSiblingsHidden(element);
 
-          if (
-            ppixiv &&
-            !window.location.href.match(
-              /(bookmarks|artworks|ranking|bookmark_new_illust|complete|users)/
-            )
-          ) {
-            if (isReprocessed) {
-              if (!settings.dimRepeated) {
-                if (element.nextElementSibling === null)
-                  element.parentNode.remove();
-                element.remove();
-              } else {
-                element.style.opacity = "0.2";
-              }
-            }
-          } else if (isReprocessed) {
-            if (!settings.dimRepeated) {
-              element.style.display = "none";
-            } else {
-              element.style.opacity = "0.2";
-            }
+          if (isReprocessed) {
+            hideOrDimElement(element, allSiblingsHidden);
           }
         } catch (error) {
           console.error("Error hiding artwork:", error.message);
@@ -266,80 +402,60 @@ const selectors = ppixiv
       //`.sc-1kr69jw-4.gueEHy ul > div`,
     ];
 
-const elements = ppixiv
-  ? [`.thumbnails`]
-  : [
-      `.gtm-illust-recommend-zone`,
-      `aside:nth-child(4) .gtm-illust-recommend-zone`,
-      `.gtm-illust-recommend-zone .sc-jeb5bb-1.dSVJt`,
-      `.gtm-toppage-thumbnail-illustration-recommend-works-zone ul`,
-      `#illust-recommend`,
-      `.sc-l7cibp-0.juyBTC`,
-      `.gtm-toppage-thumbnail-illustration-recommend-tag-zone ul`,
-      `.gtm-toppage-thumbnail-r18-illustration-recommend-tag-zone ul`,
-      //`.sc-1kr69jw-4.gueEHy ul`,
-    ];
-
 const options = ppixiv
-  ? { root: null, rootMargin: "9600px", threshold: 0.1 }
-  : { root: null, rootMargin: "1200px", threshold: 0.5 };
+  ? { root: null, rootMargin: "0px", threshold: 0.5 }
+  : { root: null, rootMargin: "0px", threshold: 0.5 };
 
 targetSelector = selectors.join(", ");
-targetElement = elements.join(", ");
 
-const intersectionCallback = (entries, observer) => {
-  entries.forEach((entry) => {
-    if (entry.isIntersecting) {
-      grabAndStoreNumbers(entry);
-      hideElements();
-    }
-  });
-};
+const intersectionCallback = (entries, observer) =>
+  entries.forEach(
+    (entry) => entry.isIntersecting && grabAndStoreNumbers(entry)
+  );
 
-const createIntersectionObserver = (callback, options) =>
-  new IntersectionObserver(callback, options);
+const createObserver = (callback, options, targetSelector) => {
+  const observer = new IntersectionObserver(callback, options);
+  const cachedElements = new Set();
 
-const observeElements = (observer, elements) => {
-  elements.forEach((element) => {
-    observer.observe(element);
-  });
-};
+  const observeElements = () => {
+    document.querySelectorAll(targetSelector).forEach((el) => {
+      if (!cachedElements.has(el)) {
+        getNumbers(selectElement({ target: el }), "checkReprocessed");
+        observer.observe(el);
+        cachedElements.add(el);
+        hideElements();
+      }
+    });
 
-const configureMutationObserver = (callback, targetElement) => {
-  const observer = new MutationObserver(callback);
-  observer.observe(document.body, { childList: true, subtree: true });
+    document.querySelectorAll(".fliWFr").forEach((button) => {
+      let value = GM_getValue("Following", []);
+      if (!cachedElements.has(button)) {
+        button.addEventListener("click", function () {
+          if (value.length !== 0) {
+            const action =
+              button.textContent.trim().toLowerCase() === "following"
+                ? "remove"
+                : "add";
+            whitelistFollowing(button, "one", action);
+          } else {
+            whitelistFollowing(null, "two");
+          }
+        });
+        cachedElements.add(button);
+      }
+    });
+  };
+
+  new MutationObserver(() => {
+    clearTimeout(this.timeoutId);
+    this.timeoutId = setTimeout(observeElements, 100);
+  }).observe(document.body, { childList: true, subtree: true });
+
+  observeElements();
   return observer;
 };
 
-function createIntersectionAndMutationObserver(
-  intersectionCallback,
-  options,
-  targetSelector,
-  targetElement
-) {
-  const intersectionObserver = createIntersectionObserver(
-    intersectionCallback,
-    options
-  );
-  const mutationCallback = () =>
-    observeElements(
-      intersectionObserver,
-      document.querySelectorAll(targetSelector)
-    );
-  const mutationObserver = configureMutationObserver(
-    mutationCallback,
-    targetElement
-  );
-  return { intersectionObserver, mutationObserver };
-}
-
-const { intersectionObserver, mutationObserver } =
-  createIntersectionAndMutationObserver(
-    intersectionCallback,
-    options,
-    targetSelector,
-    targetElement
-  );
+const observer = createObserver(intersectionCallback, options, targetSelector);
 
 const createElement = (tag, props) =>
   Object.assign(document.createElement(tag), props);
@@ -352,7 +468,7 @@ const [button, menu, maxRepetitionsInput] = [
   }),
   createElement("div", {
     style:
-      "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: #181a1b; color: #ffffff; padding: 10px; border-top: 1px solid #3a3e41; border-right: 1px solid #3a3e41; border-bottom: 1px solid #3a3e41; border-left: 1px solid #3a3e41; border-radius: 5px; box-shadow: 0px 8px 15px rgba(0, 0, 0, 0.1); display: none;",
+      "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: #181a1b; color: #ffffff; padding: 10px; border: 1px solid #3a3e41; border-radius: 5px; box-shadow: 0px 8px 15px rgba(0, 0, 0, 0.1); display: none;",
   }),
   createElement("input", {
     type: "number",
@@ -361,8 +477,10 @@ const [button, menu, maxRepetitionsInput] = [
   }),
 ];
 
-menu.appendChild(createElement("label", { textContent: "Max Repetitions: " }));
-menu.appendChild(maxRepetitionsInput);
+menu.append(
+  createElement("label", { textContent: "Max Repetitions: " }),
+  maxRepetitionsInput
+);
 
 maxRepetitionsInput.addEventListener("input", () => {
   let value = Math.max(parseInt(maxRepetitionsInput.value), 1);
@@ -370,35 +488,32 @@ maxRepetitionsInput.addEventListener("input", () => {
   GM_setValue("maxRepetitions", value);
 });
 
-const toggleButton = (text, key) => {
-  const [p, button] = [
+const toggleCheckbox = (text, key) => {
+  const [p, checkbox] = [
     createElement("p", { textContent: `${text}: ${settings[key]}` }),
-    createElement("button", { textContent: "Toggle" }),
+    createElement("input", { type: "checkbox" }),
   ];
-  button.addEventListener("click", () => {
-    p.textContent = `${text}: ${(settings[key] = !settings[key])}`;
+  checkbox.checked = settings[key];
+  checkbox.addEventListener("change", () => {
+    p.textContent = `${text}: ${(settings[key] = checkbox.checked)}`;
     GM_setValue(key, settings[key]);
   });
-  menu.appendChild(p);
-  menu.appendChild(button);
+  menu.append(p, checkbox);
 };
 
-["Hide Author", "Dim Repeated"].forEach((text, index) =>
-  toggleButton(text, Object.keys(settings)[index + 1])
+["Hide Author", "Dim Repeated", "Whitelist Following"].forEach((text, index) =>
+  toggleCheckbox(text, Object.keys(settings)[index + 1])
 );
 
 setTimeout(() => {
-  [button, menu].forEach((el) => document.body.appendChild(el));
-
+  document.body.append(button, menu);
   button.addEventListener(
     "click",
     () =>
       (menu.style.display = menu.style.display === "none" ? "block" : "none")
   );
-
   document.addEventListener("click", (event) => {
-    if (!button.contains(event.target) && !menu.contains(event.target)) {
+    if (!button.contains(event.target) && !menu.contains(event.target))
       menu.style.display = "none";
-    }
   });
 }, 3000);
