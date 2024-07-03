@@ -9,7 +9,7 @@
 // @grant         GM_listValues
 // @inject-into   content
 // @run-at        document-idle
-// @version       2.1
+// @version       2.2
 // @author        SADNESS81
 // @description   Hides an artwork after it appears 3 times
 // @license       MIT
@@ -66,8 +66,10 @@ const whitelistFollowing = async (element, task, action) => {
     return;
   }
 
-  const userId = parseInt(
-    document.querySelector("#qualtrics_user-id")?.textContent
+  let userId = parseInt(
+    Object.keys(localStorage)
+      .find((key) => key.match(/^viewed_illust_ids_(\d+)$/))
+      ?.match(/\d+/)
   );
 
   if (!userId) return;
@@ -82,6 +84,7 @@ const whitelistFollowing = async (element, task, action) => {
   } else {
     times = 0;
     GM_setValue("Times", times);
+    GM_setValue("Following", []);
     whitelistFollowing(null, "two", null);
   }
 
@@ -96,13 +99,9 @@ const whitelistFollowing = async (element, task, action) => {
     const { idValue } = storageManager.getElementValues(element);
     if (
       idValue &&
-      ((action === "add" && !value.includes(idValue)) ||
-        (action === "remove" && value.includes(idValue)))
+      ((action === "add" && !value.includes(idValue)) || (action === "remove" && value.includes(idValue)))
     ) {
-      value =
-        action === "add"
-          ? [...value, idValue]
-          : value.filter((v) => v !== idValue);
+      value = action === "add" ? [...value, idValue] : value.filter((v) => v !== idValue);
       GM_setValue("Following", value);
     }
     GM_deleteValue(idValue.toString());
@@ -119,21 +118,13 @@ const whitelistFollowing = async (element, task, action) => {
             `https://www.pixiv.net/ajax/user/${userId}/following?offset=${offset}&limit=100&rest=${restType}`
           ).then((res) => res.json());
           if (data.body?.users) {
-            value = [
-              ...new Set([
-                ...value,
-                ...data.body.users.map((user) => user.userId),
-              ]),
-            ];
+            value = [...new Set([...value, ...data.body.users.map((user) => user.userId)])];
             total = offset === 0 ? data.body.total : total;
             offset += 100;
           }
         }
       } catch (error) {
-        console.error(
-          `Error fetching following list for rest=${restType}:`,
-          error
-        );
+        console.error(`Error fetching following list for rest=${restType}:`, error);
       }
     };
 
@@ -155,14 +146,9 @@ const getNumbers = (elements, task) => {
 
   if (
     ppixiv &&
-    [
-      "bookmarks",
-      "artworks",
-      "ranking",
-      "bookmark_new_illust",
-      "complete",
-      "users",
-    ].some((page) => lastHref.includes(page))
+    ["bookmarks", "artworks", "ranking", "bookmark_new_illust", "complete", "users"].some((page) =>
+      lastHref.includes(page)
+    )
   ) {
     return [];
   }
@@ -174,8 +160,7 @@ const getNumbers = (elements, task) => {
   const regex = ppixiv ? /\b(\d+)-(\d+)\b|\b(\d+)\b/g : /\b(\d+)\b/g;
 
   elements.forEach((currentElement) => {
-    const { idValue, gtmValue } =
-      storageManager.getElementValues(currentElement);
+    const { idValue, gtmValue } = storageManager.getElementValues(currentElement);
     const value = settings.hideAuthor ? idValue : gtmValue;
 
     if (!value) {
@@ -196,17 +181,8 @@ const getNumbers = (elements, task) => {
         checkReprocessed(currentElement, num, currentValue);
       }
 
-      if (
-        !settings.whitelistFollowed ||
-        (!following.has(idValue) && settings.whitelistFollowed)
-      ) {
-        processNumbers(
-          currentElement,
-          num,
-          currentValue,
-          storedNumbers,
-          numbers
-        );
+      if (!settings.whitelistFollowed || (!following.has(idValue) && settings.whitelistFollowed)) {
+        processNumbers(currentElement, num, currentValue, storedNumbers, numbers);
       }
     }
   });
@@ -214,22 +190,12 @@ const getNumbers = (elements, task) => {
   return Array.from(numbers);
 };
 
-const processNumbers = (
-  currentElement,
-  num,
-  currentValue,
-  storedNumbers,
-  numbers
-) => {
+const processNumbers = (currentElement, num, currentValue, storedNumbers, numbers) => {
   if (!storedNumbers.has(num)) {
     numbers.add(num);
     currentElement.classList.add("processed");
     noReprocess.add(num);
-  } else if (
-    !noReprocess.has(num) &&
-    currentValue < settings.maxRepetitions &&
-    settings.maxRepetitions !== 1
-  ) {
+  } else if (!noReprocess.has(num) && currentValue < settings.maxRepetitions && settings.maxRepetitions !== 1) {
     GM_setValue(`${num}`, currentValue + 1);
     currentElement.classList.add("processed2");
     noReprocess.add(num);
@@ -291,14 +257,9 @@ const storageManager = {
   },
 
   getElementValues: (currentElement) => {
-    const getValue = (...keys) =>
-      keys.reduce((acc, key) => acc || currentElement.dataset[key], null);
-    const idValue = ppixiv
-      ? getValue("userId")
-      : getValue("gtmUserId", "user_id");
-    const gtmValue = ppixiv
-      ? getValue("mediaId")
-      : getValue("gtmRecommendIllustId", "gtmValue");
+    const getValue = (...keys) => keys.reduce((acc, key) => acc || currentElement.dataset[key], null);
+    const idValue = ppixiv ? getValue("userId") : getValue("gtmUserId", "user_id");
+    const gtmValue = ppixiv ? getValue("mediaId") : getValue("gtmRecommendIllustId", "gtmValue");
     return { idValue, gtmValue };
   },
 };
@@ -333,27 +294,16 @@ const getSelectors = () => {
 };
 
 const isElementReprocessed = (element) => {
-  return Array.from(element.querySelectorAll("a.reprocessed")).some(
-    (el) => getComputedStyle(el).display !== "none"
-  );
+  return Array.from(element.querySelectorAll("a.reprocessed")).some((el) => getComputedStyle(el).display !== "none");
 };
 
 const areAllSiblingsHidden = (element) => {
-  return Array.from(element.parentNode.children).every(
-    (sibling) => sibling.style.display === "none"
-  );
+  return Array.from(element.parentNode.children).every((sibling) => sibling.style.display === "none");
 };
 
 const hideOrDimElement = (element, allSiblingsHidden) => {
-  if (
-    ppixiv &&
-    !window.location.href.match(
-      /(bookmarks|artworks|ranking|bookmark_new_illust|complete|users)/
-    )
-  ) {
-    allSiblingsHidden
-      ? (element.parentNode.style.display = "none")
-      : (element.style.display = "none");
+  if (ppixiv && !window.location.href.match(/(bookmarks|artworks|ranking|bookmark_new_illust|complete|users)/)) {
+    allSiblingsHidden ? (element.parentNode.style.display = "none") : (element.style.display = "none");
   } else if (!settings.dimRepeated) {
     element.style.display = "none";
   } else {
@@ -409,9 +359,7 @@ const options = ppixiv
 targetSelector = selectors.join(", ");
 
 const intersectionCallback = (entries, observer) =>
-  entries.forEach(
-    (entry) => entry.isIntersecting && grabAndStoreNumbers(entry)
-  );
+  entries.forEach((entry) => entry.isIntersecting && grabAndStoreNumbers(entry));
 
 const createObserver = (callback, options, targetSelector) => {
   const observer = new IntersectionObserver(callback, options);
@@ -432,10 +380,7 @@ const createObserver = (callback, options, targetSelector) => {
       if (!cachedElements.has(button)) {
         button.addEventListener("click", function () {
           if (value.length !== 0) {
-            const action =
-              button.textContent.trim().toLowerCase() === "following"
-                ? "remove"
-                : "add";
+            const action = button.textContent.trim().toLowerCase() === "following" ? "remove" : "add";
             whitelistFollowing(button, "one", action);
           } else {
             whitelistFollowing(null, "two");
@@ -457,8 +402,7 @@ const createObserver = (callback, options, targetSelector) => {
 
 const observer = createObserver(intersectionCallback, options, targetSelector);
 
-const createElement = (tag, props) =>
-  Object.assign(document.createElement(tag), props);
+const createElement = (tag, props) => Object.assign(document.createElement(tag), props);
 
 const [button, menu, maxRepetitionsInput] = [
   createElement("button", {
@@ -477,10 +421,7 @@ const [button, menu, maxRepetitionsInput] = [
   }),
 ];
 
-menu.append(
-  createElement("label", { textContent: "Max Repetitions: " }),
-  maxRepetitionsInput
-);
+menu.append(createElement("label", { textContent: "Max Repetitions: " }), maxRepetitionsInput);
 
 maxRepetitionsInput.addEventListener("input", () => {
   let value = Math.max(parseInt(maxRepetitionsInput.value), 1);
@@ -507,13 +448,8 @@ const toggleCheckbox = (text, key) => {
 
 setTimeout(() => {
   document.body.append(button, menu);
-  button.addEventListener(
-    "click",
-    () =>
-      (menu.style.display = menu.style.display === "none" ? "block" : "none")
-  );
+  button.addEventListener("click", () => (menu.style.display = menu.style.display === "none" ? "block" : "none"));
   document.addEventListener("click", (event) => {
-    if (!button.contains(event.target) && !menu.contains(event.target))
-      menu.style.display = "none";
+    if (!button.contains(event.target) && !menu.contains(event.target)) menu.style.display = "none";
   });
 }, 3000);
